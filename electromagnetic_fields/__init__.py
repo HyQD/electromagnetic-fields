@@ -1,0 +1,1 @@
+from .dipole_fields import (ramped_wave)
