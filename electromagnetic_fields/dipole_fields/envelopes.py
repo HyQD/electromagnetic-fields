@@ -21,6 +21,19 @@ class SineSquareEnvelope:
         )
 
 
+class GaussianEnvelope:
+    def __init__(self, tc, sigma):
+        self.tc = tc
+        self.sigma = sigma
+
+    def __call__(self, t):
+        """
+        Evaluate the Gaussian envelope
+            F(t) = exp(-(t - tc)**2 / (2*sigma**2))
+        """
+        return np.exp(-((t - self.tc) ** 2) / (2 * self.sigma**2))
+
+
 class TrigonometricGaussianEnvelope:
     """
     The trigonometric envelope for a given n
