@@ -1,6 +1,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
-from electromagnetic_fields.dipole_fields import AdiabaticLaser
+from electromagnetic_fields.dipole_fields import AdiabaticField
 
 E0 = 1.0
 omega = 0.057
@@ -15,7 +15,7 @@ switch_functions = ["linear", "quadratic", "fermi"]
 plt.figure()
 
 for switch in switch_functions:
-    electric_field = AdiabaticLaser(
+    electric_field = AdiabaticField(
         F_str=E0,
         omega=omega,
         n_switch=n_ramp_cycles,
