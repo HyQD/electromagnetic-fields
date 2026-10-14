@@ -1,188 +1,184 @@
+"""Finite and Gaussian laser pulses in length and velocity gauge."""
+
+from math import comb
+
 import numpy as np
-from scipy.special import comb
-from electromagnetic_fields.dipole_fields.envelopes import (
+
+from .base import TemporalField, finite_real, positive_real
+from .envelopes import (
+    GaussianEnvelope,
     SineSquareEnvelope,
     TrigonometricGaussianEnvelope,
-    GaussianEnvelope,
 )
 
 
-class SineSquareLaser:
+def _integral_sine(frequency, upper, lower, phase):
+    """Return the integral of ``sin(frequency*t + phase)``."""
+    scale = max(1.0, abs(frequency))
+    if abs(frequency) <= 10 * np.finfo(float).eps * scale:
+        return (upper - lower) * np.sin(phase)
+    return (
+        np.cos(frequency * lower + phase)
+        - np.cos(frequency * upper + phase)
+    ) / frequency
+
+
+class SineSquareLaser(TemporalField):
+    r"""Sine carrier with a finite sine-square envelope.
+
+    ``E0`` is the peak electric-field parameter in both gauges. Length gauge
+    returns the electric field, while velocity gauge returns a vector
+    potential satisfying ``E(t) = -dA(t)/dt`` and ``A(t0) = 0``.
+
+    ``ncycles`` may be any positive real number. Fractional cycles generally
+    produce a nonzero pulse area, so the vector potential can approach a
+    nonzero constant after the electric-field pulse has ended.
+    """
+
     supported_gauges = ("length", "velocity")
-    required_params = {"E0", "omega", "ncycles", "gauge", "phase", "t0"}
+    required_params = {"E0", "omega", "ncycles", "gauge"}
 
     def __init__(self, *, E0, omega, ncycles, gauge, phase=0.0, t0=0.0):
-        self.E0 = E0
-        self.A0 = E0 / omega
-        self.omega = omega
-        self.tprime = 2 * ncycles * np.pi / omega
+        self.E0 = finite_real(E0, "E0")
+        self.omega = positive_real(omega, "omega")
+        self.ncycles = positive_real(ncycles, "ncycles")
+        self.A0 = self.E0 / self.omega
+        self.tprime = 2 * self.ncycles * np.pi / self.omega
         self.phase = phase
-        self.t0 = t0
-        self._envelope = SineSquareEnvelope(t0, self.tprime)
-
-        self._ncycles_is_one = True if ncycles == 1 else False
-        self._A1_t0 = self._A1(0)
-
-        if gauge == "length":
-            self._callable = self.electric_field
+        self.t0 = finite_real(t0, "t0")
+        if not callable(phase):
+            self.phase = finite_real(phase, "phase")
         elif gauge == "velocity":
-            self._callable = self.vector_potential
-        else:
-            raise ValueError(f"Gauge '{gauge}' is not supported.")
-
-    def __call__(self, t):
-        return self._callable(t)
-
-    def _phase(self, t):
-        if callable(self.phase):
-            return self.phase(t)
-        else:
-            return self.phase
-
-    def electric_field(self, t):
-        dt = t - self.t0
-        pulse = (
-            self._envelope(dt)
-            * np.sin(self.omega * dt + self._phase(dt))
-            * self.E0
-        )
-        return pulse
-
-    def vector_potential(self, t):
-        dt = t - self.t0
-
-        pulse = self.E0 * (self._A1(dt) - self._A1_t0) * self._envelope(dt)
-        return pulse
-
-    def _A1(self, t):
-        if not self._ncycles_is_one:
-            f0 = (
-                self.tprime
-                * np.cos(
-                    t * (self.omega - 2 * np.pi / self.tprime) + self._phase(t)
-                )
-                / (self.omega * self.tprime - 2 * np.pi)
+            raise ValueError(
+                "A callable phase is supported only in length gauge because "
+                "its consistent vector potential is not available analytically."
             )
-        else:
-            f0 = 0
-        f1 = (
-            self.tprime
-            * np.cos(
-                t * (self.omega + 2 * np.pi / self.tprime) + self._phase(t)
-            )
-            / (self.omega * self.tprime + 2 * np.pi)
+        self._envelope = SineSquareEnvelope(self.t0, self.tprime)
+        super().__init__(
+            gauge,
+            time_support=(self.t0, self.t0 + self.tprime),
         )
-        f2 = 2 * np.cos(self._phase(t)) * np.cos(self.omega * t) / self.omega
-        f3 = 2 * np.sin(self._phase(t)) * np.sin(self.omega * t) / self.omega
-        return (1 / 4.0) * (-f0 - f1 + f2 - f3)
+
+    def _phase(self, time):
+        return self.phase(time) if callable(self.phase) else self.phase
+
+    def electric_field(self, time):
+        values = np.asarray(time)
+        delay = values - self.t0
+        return (
+            self.E0
+            * self._envelope(values)
+            * np.sin(self.omega * delay + self._phase(delay))
+        )
+
+    def vector_potential(self, time):
+        delay = np.asarray(time, dtype=float) - self.t0
+        upper = np.clip(delay, 0.0, self.tprime)
+        envelope_frequency = 2 * np.pi / self.tprime
+        integral = self.E0 * (
+            0.5 * _integral_sine(self.omega, upper, 0.0, self.phase)
+            - 0.25
+            * _integral_sine(
+                self.omega + envelope_frequency,
+                upper,
+                0.0,
+                self.phase,
+            )
+            - 0.25
+            * _integral_sine(
+                self.omega - envelope_frequency,
+                upper,
+                0.0,
+                self.phase,
+            )
+        )
+        return -integral
 
 
-class GaussianLaser:
+class GaussianLaser(TemporalField):
+    """Gaussian-envelope laser currently available in length gauge."""
+
+    supported_gauges = ("length",)
 
     def __init__(self, E0, omega, phase, sigma, tc=0.0, gauge="length"):
-        self.E0 = E0
-        self.omega = omega
-        self.phase = phase
-        self._envelope = GaussianEnvelope(tc, sigma)
+        self.E0 = finite_real(E0, "E0")
+        self.omega = positive_real(omega, "omega")
+        self.phase = finite_real(phase, "phase")
+        self.sigma = positive_real(sigma, "sigma")
+        self.tc = finite_real(tc, "tc")
+        self._envelope = GaussianEnvelope(self.tc, self.sigma)
+        super().__init__(gauge, time_support=(None, None))
 
-        if gauge == "length":
-            self._callable = self.electric_field
-        else:
-            raise ValueError(f"Gauge '{gauge}' is not supported.")
-
-    def __call__(self, t):
-        return self._callable(t)
-
-    def electric_field(self, t):
+    def electric_field(self, time):
         return (
             self.E0
-            * self._envelope(t)
-            * np.sin(self.omega * (t - self._envelope.tc) + self.phase)
+            * self._envelope(time)
+            * np.sin(self.omega * (np.asarray(time) - self.tc) + self.phase)
         )
 
 
-class TrigonometricGaussianLaser:
-    """
-    Approximate a monochromatic wave modulated by a Gaussian envelope
-        E_G(t) = E0 * exp(-(t - tc)**2 / (2*sigma**2)) * cos(omega * (t - tc) + phase)
-    using a trigonometric envelope of the form
-        T(t;n,t_c) = cos( pi * (t - tc) / \tau_n)**n, \tau_n = pi * sqrt(ln(2)) * sigma / arccos(2^(-1/(2n)))
-    so that
-        E_Tn(t) = E0 * T(t) * cos(omega * (t - tc) + phase), tc-\tau_n/2 <= t <= tc+\tau_n/2
-        E_Tn(t) = 0, otherwise.
+class TrigonometricGaussianLaser(TemporalField):
+    r"""Compact trigonometric approximation to a Gaussian laser pulse.
 
-    The corresponding vector potential is obtained from
-        A_Tn(t) = - integral E_Tn(t) dt.
+    The same electric-field amplitude ``E0`` is used in both gauges. The
+    velocity-gauge representation satisfies ``E(t) = -dA(t)/dt`` and chooses
+    ``A(t_start) = 0``.
     """
+
+    supported_gauges = ("length", "velocity")
 
     def __init__(self, E0, omega, phase, sigma, n, tc=None, gauge="length"):
-        self.n = n
+        if isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer)):
+            raise TypeError("n must be a positive integer.")
+        if n <= 0:
+            raise ValueError("n must be a positive integer.")
+        self.n = int(n)
+        self.E0 = finite_real(E0, "E0")
+        self.omega = positive_real(omega, "omega")
+        self.phase = finite_real(phase, "phase")
+        self.sigma = positive_real(sigma, "sigma")
         self.tau_n = (
-            np.pi * np.sqrt(np.log(2)) * sigma / np.arccos(2 ** (-1 / (2 * n)))
+            np.pi
+            * np.sqrt(np.log(2))
+            * self.sigma
+            / np.arccos(2 ** (-1 / (2 * self.n)))
         )
-
-        self.E0 = E0
-        self.omega = omega
-        self.phase = phase
-        if tc is None:
-            self.tc = self.tau_n / 2
-        else:
-            self.tc = tc
-
+        self.tc = self.tau_n / 2 if tc is None else finite_real(tc, "tc")
         self.t_start = self.tc - self.tau_n / 2
         self.t_end = self.tc + self.tau_n / 2
+        self._envelope = TrigonometricGaussianEnvelope(
+            self.tc, self.sigma, self.n
+        )
+        super().__init__(gauge, time_support=(self.t_start, self.t_end))
 
-        self._envelope = TrigonometricGaussianEnvelope(self.tc, sigma, n)
-
-        self.At_start = self._At(self.t_start)
-        self.At_end = self._At(self.t_end)
-
-        if gauge == "length":
-            self._callable = self.electric_field
-        elif gauge == "velocity":
-            self._callable = self.vector_potential
-        else:
-            raise ValueError(f"Gauge '{gauge}' is not supported.")
-
-    def __call__(self, t):
-        return self._callable(t)
-
-    def electric_field(self, t):
+    def electric_field(self, time):
+        values = np.asarray(time)
         return (
             self.E0
-            * self._envelope(t)
-            * np.sin(self.omega * (t - self.tc) + self.phase)
-            * np.heaviside(t - self.t_start, 1.0)
-            * np.heaviside(self.t_end - t, 1.0)
+            * self._envelope(values)
+            * np.sin(self.omega * (values - self.tc) + self.phase)
+            * np.heaviside(values - self.t_start, 1.0)
+            * np.heaviside(self.t_end - values, 1.0)
         )
 
-    def _At(self, t):
-        if type(t) == np.ndarray:
-            At = np.zeros_like(t)
-        else:
-            At = 0.0
-
-        for k in range(0, self.n + 1):
-            n_choose_k = comb(self.n, k)
-            Omega_k = (self.n - 2 * k) * np.pi / self.tau_n + self.omega
-            At += (
-                n_choose_k
-                * np.cos(Omega_k * (t - self.tc) + self.phase)
-                / Omega_k
+    def _vector_potential_inside(self, time):
+        relative_time = np.asarray(time) - self.tc
+        relative_start = self.t_start - self.tc
+        result = np.zeros_like(relative_time, dtype=float)
+        for k in range(self.n + 1):
+            frequency = (self.n - 2 * k) * np.pi / self.tau_n + self.omega
+            result -= (
+                comb(self.n, k)
+                * _integral_sine(
+                    frequency,
+                    relative_time,
+                    relative_start,
+                    self.phase,
+                )
             )
-        At *= self.E0 / (2 ** (self.n))
+        return self.E0 * result / (2**self.n)
 
-        return At
-
-    def vector_potential(self, t):
-        if isinstance(t, np.ndarray):
-            result = np.zeros_like(t, dtype=float)
-            mask = (t >= self.t_start) & (t <= self.t_end)
-            result[mask] = self._At(t[mask]) - self.At_start
-            result[~mask] = self.At_end - self.At_start
-            return result
-        else:
-            if self.t_start <= t <= self.t_end:
-                return self._At(t) - self.At_start
-            else:
-                return self.At_end - self.At_start
+    def vector_potential(self, time):
+        values = np.asarray(time, dtype=float)
+        clipped = np.clip(values, self.t_start, self.t_end)
+        return self._vector_potential_inside(clipped)
