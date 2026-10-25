@@ -9,11 +9,13 @@ class DiscreteDeltaPulse(TemporalField):
     r"""Right-sided rectangular approximation to ``F_str*delta(t - t0)``.
 
     The electric field equals ``F_str/dt`` on ``[t0, t0 + dt)`` and vanishes
-    elsewhere, so its time integral is ``F_str``. Only length gauge is
-    currently available.
+    elsewhere, so its time integral is ``F_str``. In velocity gauge the
+    vector potential is chosen to vanish before the pulse, decrease linearly
+    during the pulse, and equal ``-F_str`` afterward. Consequently,
+    ``E(t) = -dA(t)/dt`` away from the interval endpoints.
     """
 
-    supported_gauges = ("length",)
+    supported_gauges = ("length", "velocity")
 
     def __init__(self, F_str, dt, t0=0.0, gauge="length"):
         self.F_str = finite_real(F_str, "F_str")
@@ -25,6 +27,11 @@ class DiscreteDeltaPulse(TemporalField):
         values = np.asarray(time)
         inside = (values >= self.t0) & (values < self.t0 + self.dt)
         return np.where(inside, self.F_str / self.dt, 0.0)
+
+    def vector_potential(self, time):
+        values = np.asarray(time, dtype=float)
+        elapsed_fraction = np.clip((values - self.t0) / self.dt, 0.0, 1.0)
+        return -self.F_str * elapsed_fraction
 
 
 class GaussianDeltaPulse(TemporalField):

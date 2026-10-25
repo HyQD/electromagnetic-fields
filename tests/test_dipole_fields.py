@@ -107,11 +107,30 @@ def test_discrete_delta_uses_t0_as_interval_start_and_has_requested_area():
     assert field.F_str == pytest.approx(field.dt * field(1.5))
 
 
+def test_discrete_delta_velocity_gauge_is_consistent_with_electric_field():
+    length = DiscreteDeltaPulse(
+        F_str=0.3, dt=0.2, t0=1.5, gauge="length"
+    )
+    velocity = DiscreteDeltaPulse(
+        F_str=0.3, dt=0.2, t0=1.5, gauge="velocity"
+    )
+    np.testing.assert_allclose(
+        velocity(np.array([1.4, 1.5, 1.6, 1.7, 1.8])),
+        np.array([0.0, 0.0, -0.15, -0.3, -0.3]),
+    )
+
+    times = np.linspace(1.51, 1.69, 10)
+    spacing = 1.0e-6
+    derivative = (
+        velocity(times + spacing) - velocity(times - spacing)
+    ) / (2.0 * spacing)
+    np.testing.assert_allclose(length(times), -derivative, atol=1.0e-10)
+
+
 @pytest.mark.parametrize(
     "factory",
     [
         lambda: GaussianLaser(1.0, 0.5, 0.0, 2.0, gauge="velocity"),
-        lambda: DiscreteDeltaPulse(1.0, 0.1, gauge="velocity"),
         lambda: GaussianDeltaPulse(gauge="velocity"),
         lambda: AdiabaticField(1.0, 0.5, gauge="velocity"),
     ],
